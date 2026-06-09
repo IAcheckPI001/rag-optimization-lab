@@ -2,10 +2,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import Field
 
-
-NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+from app.schemas.common import NonEmptyStr, PipelineSchema
 
 
 class SourceType(str, Enum):
@@ -34,17 +33,18 @@ class ProcessingStage(str, Enum):
     failed = "failed"
 
 
-class SourceError(BaseModel):
+class SourceError(PipelineSchema):
     error_code: NonEmptyStr
     message: NonEmptyStr
     failed_stage: ProcessingStage
     retryable: bool = False
 
 
-class BaseFileMetadata(BaseModel):
+class BaseFileMetadata(PipelineSchema):
     title: str | None = None
     original_filename: NonEmptyStr
     checksum_sha256: str | None = None
+    extra_metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class PdfSourceMetadata(BaseFileMetadata):
@@ -63,7 +63,7 @@ class DocxSourceMetadata(BaseFileMetadata):
     table_count: int | None = None
 
 
-class UrlSourceMetadata(BaseModel):
+class UrlSourceMetadata(PipelineSchema):
     metadata_type: Literal["url"] = "url"
     original_url: NonEmptyStr
     final_url: str | None = None
@@ -79,6 +79,7 @@ class UrlSourceMetadata(BaseModel):
     crawled_at: datetime | None = None
     http_status: int | None = None
     mime_type: str | None = None
+    extra_metadata: dict[str, object] = Field(default_factory=dict)
 
 
 SourceMetadata = Annotated[
@@ -87,13 +88,13 @@ SourceMetadata = Annotated[
 ]
 
 
-class SourceCreateResponse(BaseModel):
+class SourceCreateResponse(PipelineSchema):
     source_id: NonEmptyStr
     status: SourceStatus
     message: str | None = None
 
 
-class SourceDetailResponse(BaseModel):
+class SourceDetailResponse(PipelineSchema):
     source_id: NonEmptyStr
     source_type: SourceType
     status: SourceStatus
@@ -105,4 +106,3 @@ class SourceDetailResponse(BaseModel):
     created_at: datetime
     error: SourceError | None = None
     metadata: SourceMetadata | None = None
-    original_filename: str | None = None

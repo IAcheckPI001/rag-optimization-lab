@@ -32,6 +32,7 @@ def test_source_detail_accepts_pdf_metadata() -> None:
             "original_filename": "report.pdf",
             "checksum_sha256": "abc123",
             "total_pages": 12,
+            "extra_metadata": {"parser": "pymupdf"},
         },
     )
 
@@ -40,6 +41,7 @@ def test_source_detail_accepts_pdf_metadata() -> None:
     assert isinstance(source.metadata, PdfSourceMetadata)
     assert source.metadata.mime_type == "application/pdf"
     assert source.metadata.total_pages == 12
+    assert source.metadata.extra_metadata == {"parser": "pymupdf"}
 
 
 def test_source_detail_accepts_docx_metadata() -> None:
@@ -55,6 +57,7 @@ def test_source_detail_accepts_docx_metadata() -> None:
             "original_filename": "notes.docx",
             "paragraph_count": 20,
             "table_count": 2,
+            "extra_metadata": {"style_count": 4},
         },
     )
 
@@ -62,6 +65,7 @@ def test_source_detail_accepts_docx_metadata() -> None:
     assert source.metadata.original_filename == "notes.docx"
     assert source.metadata.paragraph_count == 20
     assert source.metadata.table_count == 2
+    assert source.metadata.extra_metadata == {"style_count": 4}
 
 
 def test_source_detail_accepts_url_metadata_and_error() -> None:
@@ -94,6 +98,7 @@ def test_source_detail_accepts_url_metadata_and_error() -> None:
             "crawled_at": datetime(2026, 6, 6, 11, 5),
             "http_status": 403,
             "mime_type": "text/html",
+            "extra_metadata": {"redirect_count": 1},
         },
     )
 
@@ -101,6 +106,7 @@ def test_source_detail_accepts_url_metadata_and_error() -> None:
     assert isinstance(source.error, SourceError)
     assert source.error.retryable is False
     assert source.error.failed_stage is ProcessingStage.downloading
+    assert source.metadata.extra_metadata == {"redirect_count": 1}
 
 
 @pytest.mark.parametrize(
@@ -201,4 +207,32 @@ def test_source_detail_rejects_invalid_field_types() -> None:
             status=SourceStatus.processing,
             current_stage=ProcessingStage.queued,
             created_at="not-a-datetime",
+        )
+
+
+def test_source_detail_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        SourceDetailResponse(
+            source_id="src_001",
+            source_type=SourceType.pdf,
+            status=SourceStatus.processing,
+            current_stage=ProcessingStage.queued,
+            created_at=datetime(2026, 6, 6, 9, 30),
+            unexpected="nope",
+        )
+
+
+def test_source_metadata_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        SourceDetailResponse(
+            source_id="src_001",
+            source_type=SourceType.pdf,
+            status=SourceStatus.processing,
+            current_stage=ProcessingStage.queued,
+            created_at=datetime(2026, 6, 6, 9, 30),
+            metadata={
+                "metadata_type": "pdf",
+                "original_filename": "report.pdf",
+                "unexpected": "nope",
+            },
         )
