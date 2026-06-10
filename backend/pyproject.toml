@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "pydantic-settings",
+    "python-docx",
 ]
 
 [project.optional-dependencies]

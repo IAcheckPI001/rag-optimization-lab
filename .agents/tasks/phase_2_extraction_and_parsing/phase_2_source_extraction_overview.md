@@ -297,7 +297,7 @@ For each dependency addition:
 | Sub-phase | Status | Notes |
 | --- | --- | --- |
 | Phase 2.1 - Extraction Core Contracts | Completed | Implemented core extraction schemas, `RawDocumentUnit.unit_index`, shared `ContentExtractor` protocol, extraction runtime errors, raw unit ID helper, and focused validation tests. Full backend regression passed: `170 passed, 1 warning`. |
-| Phase 2.2 - DOCX Extraction | Not started | Parser implementation and dependency addition are deferred to Phase 2.2. |
+| Phase 2.2 - DOCX Extraction | Completed | Implemented `DocxExtractor` with `python-docx`, in-memory DOCX parsing, paragraph/table order preservation, heading paths, deterministic IDs/indexes, table serialization, DOCX stats, domain errors, and focused tests. Full backend regression passed: `187 passed, 1 warning`. |
 | Phase 2.3 - PDF Extraction | Not started | Parser implementation and dependency addition are deferred to Phase 2.3. |
 | Phase 2.4 - URL Fetching | Not started | Fetcher implementation and SSRF-safe HTTP handling are deferred to Phase 2.4. |
 | Phase 2.5 - HTML Extraction | Not started | HTML parser implementation and dependency addition are deferred to Phase 2.5. |
@@ -355,6 +355,23 @@ Completion notes:
 ---
 
 ## Phase 2.2 - DOCX Extraction
+
+Status: Completed.
+
+Completion notes:
+
+* Added `python-docx` as the Phase 2.2 runtime dependency.
+* Implemented `DocxExtractor` under the extraction provider boundary.
+* Extracts DOCX content from `ExtractionInput.content_bytes` without temporary
+  files.
+* Preserves paragraph/table body order and emits deterministic `unit_index` and
+  `raw_unit_id` values.
+* Supports basic built-in heading style detection and heading-path inheritance.
+* Serializes tables using deterministic TSV escaping.
+* Keeps DOCX-specific provenance in unit `extra_metadata` and counters in
+  `ExtractionStats.extra_metadata`.
+* Verification completed with full backend regression:
+  `187 passed, 1 warning`.
 
 ### Scope
 
