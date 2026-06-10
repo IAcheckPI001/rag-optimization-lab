@@ -31,6 +31,7 @@ def raw_unit_payload(content: str = "Leave policy allows 12 paid days.") -> dict
         "content_type": DocumentContentType.paragraph,
         "extra_metadata": {"parser": "fake"},
         "raw_unit_id": "raw_001",
+        "unit_index": 0,
         "extracted_at": datetime(2026, 6, 8, 9, 0),
     }
 
@@ -40,6 +41,7 @@ def clean_unit_payload(
 ) -> dict[str, object]:
     payload = raw_unit_payload(content)
     payload.pop("raw_unit_id")
+    payload.pop("unit_index")
     payload.pop("extracted_at")
     payload.update(
         {
@@ -57,6 +59,7 @@ def clean_unit_payload(
 def chunk_payload(content: str = "Leave policy allows 12 paid days.") -> dict[str, object]:
     payload = raw_unit_payload(content)
     payload.pop("raw_unit_id")
+    payload.pop("unit_index")
     payload.pop("extracted_at")
     payload.update(
         {
@@ -79,6 +82,7 @@ def test_raw_document_unit_accepts_valid_input_and_serializes_derived_fields() -
     dumped = unit.model_dump()
 
     assert unit.raw_unit_id == "raw_001"
+    assert unit.unit_index == 0
     assert unit.content_type is DocumentContentType.paragraph
     assert unit.page_start == 2
     assert unit.page_end == 3
@@ -160,7 +164,14 @@ def test_content_hash_is_derived_separately_per_stage() -> None:
 
 @pytest.mark.parametrize(
     "field_name",
-    ["document_id", "source_id", "content", "raw_unit_id", "extracted_at"],
+    [
+        "document_id",
+        "source_id",
+        "content",
+        "raw_unit_id",
+        "unit_index",
+        "extracted_at",
+    ],
 )
 def test_raw_document_unit_rejects_missing_required_fields(field_name: str) -> None:
     payload = raw_unit_payload()
@@ -185,6 +196,14 @@ def test_raw_document_unit_rejects_empty_or_null_required_fields(
 ) -> None:
     payload = raw_unit_payload()
     payload[field_name] = field_value
+
+    with pytest.raises(ValidationError):
+        RawDocumentUnit.model_validate(payload)
+
+
+def test_raw_document_unit_rejects_negative_unit_index() -> None:
+    payload = raw_unit_payload()
+    payload["unit_index"] = -1
 
     with pytest.raises(ValidationError):
         RawDocumentUnit.model_validate(payload)

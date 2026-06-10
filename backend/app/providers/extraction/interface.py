@@ -1,18 +1,8 @@
 from typing import Protocol
 
-from app.schemas.document import RawDocumentUnit
+from app.schemas.extraction import ExtractionInput, ExtractionResult
 
 
-class PDFExtractor(Protocol):
-    def extract(self, file_path: str) -> list[RawDocumentUnit]:
-        ...
-
-
-class DocxExtractor(Protocol):
-    def extract(self, file_path: str) -> list[RawDocumentUnit]:
-        ...
-
-
-class WebExtractor(Protocol):
-    def extract(self, url: str) -> list[RawDocumentUnit]:
+class ContentExtractor(Protocol):
+    def extract(self, input_data: ExtractionInput) -> ExtractionResult:
         ...

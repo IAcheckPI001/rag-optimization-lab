@@ -73,6 +73,7 @@ class DocumentUnitBase(PipelineSchema):
 
 class RawDocumentUnit(DocumentUnitBase):
     raw_unit_id: NonEmptyStr
+    unit_index: int = Field(ge=0)
     extracted_at: datetime
 
 
