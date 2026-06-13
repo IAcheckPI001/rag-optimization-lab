@@ -304,9 +304,9 @@ For each dependency addition:
 | Phase 2.2 - DOCX Extraction | Completed | Implemented `DocxExtractor` with `python-docx`, in-memory DOCX parsing, paragraph/table order preservation, heading paths, deterministic IDs/indexes, table serialization, DOCX stats, domain errors, and focused tests. Full backend regression passed: `187 passed, 1 warning`. |
 | Phase 2.3 - PDF Extraction | Completed | Implemented `PdfExtractor` with PyMuPDF, in-memory PDF parsing, page-ordered text block extraction, one-based page ranges, deterministic IDs/indexes, PDF stats, domain errors, bbox hardening, image-only no-content coverage, and focused tests. Full backend regression passed: `202 passed, 2 warnings`. |
 | Phase 2.4 - URL Fetching | Completed | Implemented `HttpxUrlFetcher` with HTTPX, URL normalization, SSRF/DNS validation, manual redirects, bounded streaming, total deadline, safe diagnostics, fetching errors, and mocked tests. Full backend regression passed: `263 passed, 2 warnings`. |
-| Phase 2.5 - HTML Extraction | Not started | HTML parser implementation and dependency addition are deferred to Phase 2.5. |
-| Phase 2.6 - Extractor Registry and Extraction Service | Not started | Service orchestration and runtime error mapping are deferred to Phase 2.6. |
-| Phase 2.7 - Final Verification and Documentation | Not started | Final cross-extractor verification is deferred until extractors exist. |
+| Phase 2.5 - HTML Extraction | Completed | Implemented `HtmlExtractor` with BeautifulSoup, structural HTML parsing, root selection, charset fallback warnings, deterministic IDs/indexes, heading/list/table/caption/blockquote handling, HTML stats, resource limits, and focused tests. Full backend regression passed: `282 passed, 2 warnings`. |
+| Phase 2.6 - Extractor Registry and Extraction Service | Completed | Implemented `ExtractorRegistry`, `ExtractionService`, explicit bytes/URL entry points, URL fetch-to-HTML orchestration, reserved metadata protection, dependency injection, runtime-checkable extractor diagnostics, and `SourceError` mapping through `ExtractionServiceError`. Full backend regression passed: `295 passed, 2 warnings`. |
+| Phase 2.7 - Final Verification and Documentation | Completed | Verified cross-extractor contracts through service paths, documented final Phase 2 behavior, known limitations, and DOCX/PDF/HTML compatibility matrix. Full backend regression passed: `295 passed, 2 warnings`. |
 
 ## Phase 2.1 - Extraction Core Contracts
 
@@ -581,6 +581,28 @@ Completion notes:
 
 ## Phase 2.5 - HTML Extraction
 
+Status: Completed.
+
+Completion notes:
+
+* Implemented `HtmlExtractor` under the extraction provider boundary.
+* Added `beautifulsoup4` as the Phase 2.5 structural parser dependency.
+* Preserves Phase 2.1 contracts and lineage through `ExtractionInput`,
+  `ExtractionResult`, and `RawDocumentUnit`.
+* Keeps URL fetching separate from HTML extraction; the extractor does not send
+  network requests, crawl links, render JavaScript, clean, chunk, embed, index,
+  persist, or map source-level errors.
+* Handles document title, headings, paragraphs, list items, table captions,
+  tables, code blocks, blockquotes, and fallback leaf container text.
+* Keeps HTML headings consistent with DOCX headings by using
+  `content_type=paragraph` and `extra_metadata.block_type=heading`.
+* Implements deterministic root selection, charset fallback warning behavior,
+  resource limits, ignored semantic container counters, and
+  `observed_block_count = total_units + skipped_items` for successful results.
+* Uses DOCX-compatible `tsv_escaped_v1` table serialization semantics.
+* Added focused HTML extractor tests and verified full backend regression:
+  `282 passed, 2 warnings`.
+
 ### Scope
 
 * Add `beautifulsoup4`.
@@ -649,6 +671,32 @@ final_url
 
 ## Phase 2.6 - Extractor Registry and Extraction Service
 
+Status: Completed.
+
+Completion notes:
+
+* Added the runtime-checkable `ContentExtractor` protocol for registry
+  diagnostics.
+* Implemented `ExtractorRegistry` as a provider selector only.
+* Implemented `ExtractionService` with explicit `extract_bytes()` and
+  `extract_url()` entry points.
+* Kept the service independent of FastAPI; it does not accept `UploadFile`.
+* Implemented URL orchestration as
+  `UrlFetcher -> FetchedContent -> ExtractionInput -> HtmlExtractor`.
+* Added dependency injection for registry and URL fetcher.
+* Added reserved metadata protection for service-owned keys: `fetch` and
+  `service`.
+* Added `ExtractionServiceError` carrying the existing `SourceError` schema.
+* Mapped actual provider exceptions from fetching and extraction layers without
+  inventing a new taxonomy.
+* Added focused service and registry tests, including DOCX, PDF, and URL/HTML
+  service paths.
+* Verification completed with full backend regression:
+
+```text
+295 passed, 2 warnings
+```
+
 ### Scope
 
 * Create an extractor registry.
@@ -691,6 +739,56 @@ Source input
 ---
 
 ## Phase 2.7 - Final Verification and Documentation
+
+Status: Completed.
+
+Completion notes:
+
+* Verified DOCX, PDF, and URL/HTML extraction through service paths.
+* Verified direct extractor contracts remain compatible with the shared
+  `ExtractionResult -> RawDocumentUnit[]` output shape.
+* Verified service error mapping preserves provider `error_code`, retryability,
+  stage, and exception chaining.
+* Documented the cross-extractor compatibility matrix for Phase 3.
+* Documented known limitations that cleaning/chunking must account for.
+* Verification completed with full backend regression:
+
+```text
+295 passed, 2 warnings
+```
+
+### Cross-Extractor Contract Matrix
+
+| Contract | DOCX | PDF | HTML |
+| --- | --- | --- | --- |
+| Produces `ExtractionResult` | Yes | Yes | Yes |
+| Produces `RawDocumentUnit[]` | Yes | Yes | Yes |
+| `source_uri` preserved | Yes, when provided | Yes, when provided | Yes, final URL from service |
+| Deterministic `raw_unit_id` | Yes | Yes | Yes |
+| Continuous `unit_index` | Yes | Yes | Yes |
+| One UTC timestamp per run | Yes | Yes | Yes |
+| Computed metrics/hash | Schema-generated | Schema-generated | Schema-generated |
+| Blank units rejected | Yes | Yes | Yes |
+| Page range | None | One-based `page_start/page_end` | None |
+| Heading lineage | DOCX heading styles | None | Semantic `h1`-`h6` only |
+| Table structure | `tsv_escaped_v1` | None | `tsv_escaped_v1` |
+| List structure | Paragraph-like body text | None | List item units |
+| Network access in extractor | None | None | None |
+| Network access in service path | None | None | URL fetcher only |
+| Parser-specific metadata | `extra_metadata` | `extra_metadata` | `extra_metadata` |
+| Cleaning/chunking included | No | No | No |
+
+### Known Limitations For Phase 3
+
+* PDF extraction currently has no semantic heading detection.
+* DOCX and HTML do not provide page numbers.
+* HTML heading lineage depends on semantic heading tags, not class/id
+  heuristics.
+* HTML may include structural article-adjacent noise that cleaning must handle.
+* URL ingestion supports one public HTML page, not crawling.
+* Robots handling remains deferred because Phase 2 does not crawl child links.
+* Extracted content remains untrusted input for later cleaning, retrieval, and
+  generation boundaries.
 
 ### Scope
 
