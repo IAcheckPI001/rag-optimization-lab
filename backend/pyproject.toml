@@ -13,12 +13,13 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "python-docx",
+    "PyMuPDF",
+    "httpx",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest",
-    "httpx",
 ]
 
 [tool.setuptools]

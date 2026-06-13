@@ -153,10 +153,14 @@ paths as part of the shared contract.
 ```text
 ExtractionStats
   total_units
-  skipped_units
+  skipped_items
   warning_count
   extra_metadata
 ```
+
+`skipped_items` counts parser-observed candidates that did not become emitted
+units. It must not be named `skipped_units`, because skipped candidates never
+became `RawDocumentUnit` objects.
 
 Parser-specific stats such as page counts, table counts, paragraph counts,
 HTML tag counts, or parser-specific counters belong in `extra_metadata` unless
@@ -298,8 +302,8 @@ For each dependency addition:
 | --- | --- | --- |
 | Phase 2.1 - Extraction Core Contracts | Completed | Implemented core extraction schemas, `RawDocumentUnit.unit_index`, shared `ContentExtractor` protocol, extraction runtime errors, raw unit ID helper, and focused validation tests. Full backend regression passed: `170 passed, 1 warning`. |
 | Phase 2.2 - DOCX Extraction | Completed | Implemented `DocxExtractor` with `python-docx`, in-memory DOCX parsing, paragraph/table order preservation, heading paths, deterministic IDs/indexes, table serialization, DOCX stats, domain errors, and focused tests. Full backend regression passed: `187 passed, 1 warning`. |
-| Phase 2.3 - PDF Extraction | Not started | Parser implementation and dependency addition are deferred to Phase 2.3. |
-| Phase 2.4 - URL Fetching | Not started | Fetcher implementation and SSRF-safe HTTP handling are deferred to Phase 2.4. |
+| Phase 2.3 - PDF Extraction | Completed | Implemented `PdfExtractor` with PyMuPDF, in-memory PDF parsing, page-ordered text block extraction, one-based page ranges, deterministic IDs/indexes, PDF stats, domain errors, bbox hardening, image-only no-content coverage, and focused tests. Full backend regression passed: `202 passed, 2 warnings`. |
+| Phase 2.4 - URL Fetching | Completed | Implemented `HttpxUrlFetcher` with HTTPX, URL normalization, SSRF/DNS validation, manual redirects, bounded streaming, total deadline, safe diagnostics, fetching errors, and mocked tests. Full backend regression passed: `263 passed, 2 warnings`. |
 | Phase 2.5 - HTML Extraction | Not started | HTML parser implementation and dependency addition are deferred to Phase 2.5. |
 | Phase 2.6 - Extractor Registry and Extraction Service | Not started | Service orchestration and runtime error mapping are deferred to Phase 2.6. |
 | Phase 2.7 - Final Verification and Documentation | Not started | Final cross-extractor verification is deferred until extractors exist. |
@@ -422,15 +426,36 @@ serialization_format
 
 ## Phase 2.3 - PDF Extraction
 
+Status: Completed.
+
+Completion notes:
+
+* Added `PyMuPDF` as the Phase 2.3 runtime dependency.
+* Implemented `PdfExtractor` under the extraction provider boundary.
+* Extracts PDF content from `ExtractionInput.content_bytes` without temporary
+  files.
+* Emits one `RawDocumentUnit` per non-blank text block.
+* Preserves source lineage, including `source_uri`, on emitted units.
+* Stores one-based page ranges and PDF parser metadata such as
+  `page_block_index` and `bbox`.
+* Tracks PDF-specific statistics including `blank_page_count`.
+* Rejects malformed, NaN, and infinite PDF bounding-box values through the
+  malformed-block warning path.
+* Handles source type mismatch, invalid/corrupt PDFs, password-protected PDFs,
+  and no-content PDFs with extraction runtime errors.
+* Covers blank and image-only no-content PDFs in focused tests.
+* Verification completed with full backend regression:
+  `202 passed, 2 warnings`.
+
 ### Scope
 
 * Add `PyMuPDF`.
 * Read PDF content from bytes using PyMuPDF.
 * Iterate through pages in order.
 * Extract text blocks in a reasonable reading order.
-* Create `RawDocumentUnit` objects by page or text block.
-* Store page ranges.
-* Store block indexes and bounding boxes.
+* Create one `RawDocumentUnit` per emitted non-blank text block.
+* Store one-based page ranges.
+* Store page-local block indexes and bounding boxes.
 * Detect invalid PDFs and PDFs without extractable text.
 * Collect warnings and extraction statistics.
 
@@ -439,20 +464,28 @@ serialization_format
 ```text
 parser
 page_index
-block_index
+page_number
+page_block_index
 block_type
 bbox
-font_information
-rotation
 ```
 
 ### Notes
 
 * Output page numbers must start from `1`.
+* `page_block_index` is zero-based within the page. A global
+  `document_block_index` may be stored as optional metadata when useful, but it
+  is not required.
+* `page_rotation` is optional metadata and should only be tested when the PDF
+  fixture intentionally uses rotated pages and the extractor records it.
+* `blank_page_count` belongs in `ExtractionStats.extra_metadata` so successful
+  PDFs with some blank pages can be distinguished from PDFs with no extractable
+  text.
 * Do not implement OCR for scanned PDFs in Phase 2.
 * Do not automatically remove headers or footers.
 * Do not merge pages or blocks using cleaning heuristics.
 * PDF reading order may be imperfect.
+* PDF headings and sections must not be inferred in Phase 2.3.
 * Initial tests should focus on simple-layout PDF fixtures.
 * Password-protected or corrupted PDFs must return clear domain errors.
 
@@ -467,6 +500,37 @@ rotation
 ---
 
 ## Phase 2.4 - URL Fetching
+
+Status: Completed.
+
+Completion notes:
+
+* Added `httpx` as a Phase 2.4 runtime dependency.
+* Implemented a `UrlFetcher` protocol and `HttpxUrlFetcher` provider under the
+  fetching provider boundary.
+* Reuses the existing `FetchedContent` schema and does not create
+  `RawDocumentUnit` objects.
+* Implements URL normalization, effective port policy, IP literal validation,
+  DNS validation, mixed-result rejection, metadata IP blocking, and explicit
+  non-public IP deny checks.
+* Handles redirects manually with normalized visited-set loop detection and
+  target revalidation.
+* Uses HTTPX with `follow_redirects=False`, `verify=True`, `trust_env=False`,
+  `Accept-Encoding: identity`, bounded operation timeouts, and a total fetch
+  deadline.
+* Caps per-hop HTTPX timeouts by the remaining total deadline budget and uses
+  zero retries for provider-owned HTTP transport.
+* Streams decoded bytes with early `Content-Length` checks and hard response
+  size limits.
+* Validates final status codes and HTML/XHTML content types.
+* Uses fetching-specific provider errors and sanitized diagnostic URLs.
+* Covers FetchedContent output contract, duplicate header handling, basic
+  client/response lifecycle ownership, and over-limit stream closure in focused
+  tests.
+* Documents DNS-rebinding and synchronous DNS blocking as accepted MVP residual
+  risks, and defers `robots.txt` because Phase 2.4 does not crawl links.
+* Verification completed with full backend regression:
+  `263 passed, 2 warnings`.
 
 ### Scope
 
