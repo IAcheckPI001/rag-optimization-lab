@@ -46,10 +46,9 @@ def clean_unit_payload(
     payload.update(
         {
             "clean_unit_id": "clean_001",
+            "clean_unit_index": 0,
             "raw_unit_id": "raw_001",
             "transformations": ["normalize_whitespace"],
-            "original_character_count": len(content) + 4,
-            "removed_character_count": 4,
             "cleaned_at": datetime(2026, 6, 8, 9, 5),
         }
     )
@@ -125,15 +124,14 @@ def test_raw_document_unit_rejects_derived_fields_as_input(
         RawDocumentUnit.model_validate(payload)
 
 
-def test_clean_document_unit_accepts_valid_input_and_derives_removed_count() -> None:
+def test_clean_document_unit_accepts_valid_input() -> None:
     payload = clean_unit_payload()
-    payload["removed_character_count"] = None
 
     unit = CleanDocumentUnit(**payload)
 
     assert unit.clean_unit_id == "clean_001"
+    assert unit.clean_unit_index == 0
     assert unit.raw_unit_id == "raw_001"
-    assert unit.removed_character_count == 4
     assert unit.transformations == ["normalize_whitespace"]
 
 
@@ -322,30 +320,31 @@ def test_default_lists_and_extra_metadata_are_not_shared() -> None:
     assert "mutated" not in second.extra_metadata
 
 
-def test_clean_document_unit_rejects_original_count_below_cleaned_count() -> None:
+def test_clean_document_unit_rejects_missing_clean_unit_index() -> None:
     payload = clean_unit_payload()
-    payload["original_character_count"] = len(payload["content"]) - 1
-
-    with pytest.raises(
-        ValidationError,
-        match="original_character_count cannot be less",
-    ):
-        CleanDocumentUnit.model_validate(payload)
-
-
-def test_clean_document_unit_rejects_negative_original_count() -> None:
-    payload = clean_unit_payload()
-    payload["original_character_count"] = -1
+    payload.pop("clean_unit_index")
 
     with pytest.raises(ValidationError):
         CleanDocumentUnit.model_validate(payload)
 
 
-def test_clean_document_unit_rejects_inconsistent_removed_count() -> None:
+def test_clean_document_unit_rejects_negative_clean_unit_index() -> None:
     payload = clean_unit_payload()
-    payload["removed_character_count"] = 1
+    payload["clean_unit_index"] = -1
 
-    with pytest.raises(ValidationError, match="removed_character_count is inconsistent"):
+    with pytest.raises(ValidationError):
+        CleanDocumentUnit.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["original_character_count", "removed_character_count"],
+)
+def test_clean_document_unit_rejects_removed_metric_fields(field_name: str) -> None:
+    payload = clean_unit_payload()
+    payload[field_name] = 1
+
+    with pytest.raises(ValidationError):
         CleanDocumentUnit.model_validate(payload)
 
 

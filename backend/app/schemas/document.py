@@ -79,30 +79,10 @@ class RawDocumentUnit(DocumentUnitBase):
 
 class CleanDocumentUnit(DocumentUnitBase):
     clean_unit_id: NonEmptyStr
+    clean_unit_index: int = Field(ge=0)
     raw_unit_id: NonEmptyStr
     transformations: list[NonEmptyStr] = Field(default_factory=list)
-    original_character_count: int = Field(ge=0)
-    removed_character_count: int | None = Field(default=None, ge=0)
     cleaned_at: datetime
-
-    @model_validator(mode="after")
-    def validate_cleaning_metrics(self) -> "CleanDocumentUnit":
-        if self.original_character_count < self.character_count:
-            raise ValueError(
-                "original_character_count cannot be less than cleaned character_count"
-            )
-
-        expected_removed_count = self.original_character_count - self.character_count
-
-        if (
-            self.removed_character_count is not None
-            and self.removed_character_count != expected_removed_count
-        ):
-            raise ValueError("removed_character_count is inconsistent")
-
-        self.removed_character_count = expected_removed_count
-
-        return self
 
 
 class DocumentChunk(DocumentUnitBase):
