@@ -2,7 +2,7 @@
 
 # Phase 3 — Cleaning and Normalization Overview
 
-Status: Planned
+Status: In Progress
 
 Depends on:
 
@@ -908,7 +908,45 @@ Do not store duplicate full raw content in metadata.
 
 ## 24. Sub-Phase Breakdown
 
+### Implementation Status
+
+| Sub-phase | Status | Notes |
+| --- | --- | --- |
+| Phase 3.1 - Cleaning Core Contracts | Completed | Implemented `CleanDocumentUnit.clean_unit_index`, removed per-unit removed-character metrics, added `CleaningInput`, `CleaningWarning`, `DroppedUnit`, `CleaningStats`, `CleaningResult`, cleaning runtime errors, `ContentCleaner` protocol, deterministic clean unit ID helper, and focused contract tests. Full backend regression passed: `342 passed, 2 warnings`. |
+| Phase 3.2 - Deterministic Text Normalization | Completed | Implemented pure deterministic normalization helpers, `tsv_escaped_v1` table parse/serialize helpers, content-type dispatch for prose/list/table/code/unknown content, stage-aware control cleanup, internal normalization warnings, and focused idempotency/contract tests. Full backend regression passed: `374 passed, 2 warnings`. |
+| Phase 3.3 - Clean Unit Construction | Planned | Pending implementation of raw-to-clean conversion, stable clean IDs from `RawDocumentUnit.unit_index`, continuous `clean_unit_index`, blank-after-normalization drops, dropped-unit audit records, stats, limits, and one cleaner-created timestamp per run. |
+| Phase 3.4 - Source-Aware Filtering | Planned | Pending conservative HTML/PDF source-aware filtering, high-confidence UI-noise rules, PDF page-number handling only when metadata is reliable, warnings for ambiguous cases, and false-positive regression tests. |
+| Phase 3.5 - Conservative Deduplication | Planned | Pending exact normalized duplicate detection, adjacent duplicate handling, source/section/page guards, duplicate audit records, and preservation of ambiguous duplicates. |
+| Phase 3.6 - Cleaning Service and Error Boundary | Planned | Pending `CleaningService`, `ExtractionResult -> CleaningInput -> ContentCleaner -> CleaningResult` orchestration, cleaning error mapping to `SourceError`, and service-level integration tests. |
+| Phase 3.7 - Final Verification and Documentation | Planned | Pending final cross-source verification, determinism/idempotency checks, lineage/order/statistics verification, limitation documentation, completion report, and Phase 4 input contract. |
+
 ### Phase 3.1 — Cleaning Core Contracts
+
+Status: Completed.
+
+Completion notes:
+
+* Added the shared cleaning contracts in `backend/app/schemas/cleaning.py`.
+* Added `clean_unit_index` to `CleanDocumentUnit`.
+* Removed `original_character_count` and `removed_character_count` from
+  `CleanDocumentUnit`.
+* Added `CleaningInput`, `CleaningWarning`, `DroppedUnit`, `CleaningStats`, and
+  `CleaningResult`.
+* Kept `DroppedUnit.unit_index` required and non-negative because every dropped
+  record represents one concrete `RawDocumentUnit`.
+* Kept `CleaningWarning.clean_unit_index` optional because warnings can be
+  emitted before final clean indexes exist, for dropped units, or at run scope.
+* Added aggregate validation for raw input order, clean output order, dropped
+  unit order, lineage, disjoint emitted/dropped raw IDs, statistics, and one
+  `cleaned_at` value per cleaning result.
+* Added cleaning runtime error types separately from `SourceError`.
+* Added the `ContentCleaner` protocol.
+* Added deterministic `clean_unit_id` helper using:
+  `clean:{document_id}:{raw_unit.unit_index:06d}`.
+* Added focused tests for cleaning schemas, IDs, errors, protocol behavior, and
+  updated document schema behavior.
+* Verification completed with full backend regression:
+  `342 passed, 2 warnings`.
 
 Tasks:
 
@@ -933,6 +971,29 @@ Stable cleaning contracts
 
 ### Phase 3.2 — Deterministic Text Normalization
 
+Status: Completed.
+
+Completion notes:
+
+* Added pure normalization helpers in
+  `backend/app/rag/cleaning/normalization.py`.
+* Added table text helpers in `backend/app/rag/cleaning/table_text.py` for
+  `tsv_escaped_v1` parse/serialize behavior.
+* Implemented paragraph, list, table, code, and unknown content normalization.
+* Recorded only transformation rule codes that changed output content.
+* Implemented stage-aware control cleanup after line-ending normalization and
+  content-type whitespace handling.
+* Preserved table delimiters, escaped cell semantics, empty cells, code
+  indentation, code tabs, repeated code spaces, and code outer blank lines.
+* Kept unknown content conservative by preserving tabs and NBSP.
+* Added internal warnings for replacement characters and removed unsafe control
+  characters.
+* Deferred public `CleaningWarning` assembly, blank-unit dropping, clean-unit
+  construction, source-aware filtering, and deduplication.
+* Added focused tests in `backend/tests/test_cleaning_normalization.py`.
+* Verification completed with full backend regression:
+  `374 passed, 2 warnings`.
+
 Tasks:
 
 * Implement Unicode NFC normalization.
@@ -954,6 +1015,8 @@ Raw content -> deterministic normalized content
 ```
 
 ### Phase 3.3 — Clean Unit Construction
+
+Status: Planned.
 
 Tasks:
 
@@ -978,6 +1041,8 @@ Normalized raw units -> CleanDocumentUnit[]
 
 ### Phase 3.4 — Source-Aware Filtering
 
+Status: Planned.
+
 Tasks:
 
 * Add high-confidence HTML UI-noise rules.
@@ -998,6 +1063,8 @@ Normalized clean units with high-confidence noise removed
 
 ### Phase 3.5 — Conservative Deduplication
 
+Status: Planned.
+
 Tasks:
 
 * Detect exact normalized duplicates.
@@ -1014,6 +1081,8 @@ Clean units without high-confidence duplicate noise
 ```
 
 ### Phase 3.6 — Cleaning Service and Error Boundary
+
+Status: Planned.
 
 Tasks:
 
@@ -1033,6 +1102,8 @@ ExtractionResult -> CleaningService -> CleaningResult
 ```
 
 ### Phase 3.7 — Final Verification and Documentation
+
+Status: Planned.
 
 Tasks:
 

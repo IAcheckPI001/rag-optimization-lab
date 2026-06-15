@@ -1,6 +1,6 @@
 # Phase 3.2 - Deterministic Text Normalization
 
-Status: Planned.
+Status: Completed.
 
 Depends on:
 
@@ -9,6 +9,31 @@ Depends on:
 * `CleaningInput`, `CleaningResult`, warnings, dropped units, and stats schemas.
 * Cleaning error taxonomy.
 * `ContentCleaner` protocol.
+
+## Completion Notes
+
+* Added pure deterministic normalization helpers in
+  `backend/app/rag/cleaning/normalization.py`.
+* Added `tsv_escaped_v1` table parse/serialize helpers in
+  `backend/app/rag/cleaning/table_text.py`.
+* Implemented content-type dispatch for paragraph, list, table, code, and
+  unknown content.
+* Recorded only transformations that changed output content.
+* Implemented stage-aware control cleanup:
+  line endings -> content-type whitespace policy -> residual unsafe control
+  cleanup.
+* Preserved table row/column delimiters and escaped cell semantics.
+* Preserved code indentation, tabs, repeated spaces, and outer blank lines.
+* Kept unknown content conservative by preserving tabs and NBSP.
+* Implemented internal normalization warnings for replacement characters and
+  removed unsafe controls.
+* Deferred `possible_mojibake`, blank-unit dropping, clean-unit construction,
+  public `CleaningWarning` assembly, filtering, and deduplication to later
+  phases.
+* Added focused normalization tests in
+  `backend/tests/test_cleaning_normalization.py`.
+* Verification completed with full backend regression:
+  `374 passed, 2 warnings`.
 
 ## Purpose
 
@@ -177,22 +202,31 @@ All normalized output uses `\n`.
 
 ## Control Character Policy
 
-Remove unsafe non-visible control characters while preserving structural
-characters:
+Control cleanup must be stage-aware. Do not apply one global rule before the
+content-type whitespace policy has had a chance to interpret tabs and other
+horizontal whitespace.
 
-Preserve:
-
-```text
-\n
-\t when meaningful for tables/code
-```
-
-Remove:
+Pipeline order:
 
 ```text
-C0 controls except allowed whitespace
-DEL
+line-ending normalization
+-> content-type whitespace normalization
+-> unsafe residual control-character cleanup
 ```
+
+Rules:
+
+* Prose and list content should convert tabs and horizontal whitespace to
+  ordinary spaces during their whitespace normalization step.
+* Table content must preserve real tab delimiters and escaped cell tab
+  semantics.
+* Code content must preserve tabs, repeated spaces, and indentation.
+* Unknown content should preserve tabs conservatively.
+* After content-type whitespace normalization, remove unsafe residual C0
+  controls and DEL.
+* Always preserve `\n`.
+* Preserve `\t` only where the content-type policy requires it: table, code,
+  and unknown fallback.
 
 Be conservative with Unicode format characters. Do not remove all `Cf`
 characters by default without a separate reviewed policy.
@@ -398,4 +432,3 @@ Phase 3.2 is complete when:
 * HTML UI filtering: Phase 3.4.
 * PDF page-number handling: Phase 3.4.
 * Deduplication: Phase 3.5.
-
