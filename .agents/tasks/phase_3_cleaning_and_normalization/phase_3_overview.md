@@ -915,7 +915,7 @@ Do not store duplicate full raw content in metadata.
 | Phase 3.1 - Cleaning Core Contracts | Completed | Implemented `CleanDocumentUnit.clean_unit_index`, removed per-unit removed-character metrics, added `CleaningInput`, `CleaningWarning`, `DroppedUnit`, `CleaningStats`, `CleaningResult`, cleaning runtime errors, `ContentCleaner` protocol, deterministic clean unit ID helper, and focused contract tests. Full backend regression passed: `342 passed, 2 warnings`. |
 | Phase 3.2 - Deterministic Text Normalization | Completed | Implemented pure deterministic normalization helpers, `tsv_escaped_v1` table parse/serialize helpers, content-type dispatch for prose/list/table/code/unknown content, stage-aware control cleanup, internal normalization warnings, and focused idempotency/contract tests. Full backend regression passed: `374 passed, 2 warnings`. |
 | Phase 3.3 - Clean Unit Construction | Completed | Implemented `RuleBasedDocumentCleaner`, raw-to-clean candidate finalization, stable clean IDs from `RawDocumentUnit.unit_index`, continuous clean indexes, blank-after-normalization dropped-unit audit records, strict policy/config validation, safe audit metadata, warning finalization, resource limits, UTC timestamp handling, and focused construction tests. Full backend regression passed: `411 passed, 2 warnings`. |
-| Phase 3.4 - Source-Aware Filtering | Planned | Pending conservative HTML/PDF source-aware filtering, high-confidence UI-noise rules, PDF page-number handling only when metadata is reliable, warnings for ambiguous cases, and false-positive regression tests. |
+| Phase 3.4 - Source-Aware Filtering | Completed | Implemented conservative source-aware filtering, high-confidence HTML UI-noise and reading-time drops, PDF page-number provenance/bbox validation, footer-only geometry-gated page-number drops, possible page-number warnings for ambiguous edge-like candidates, origin-aware warning stats, safe dropped audit evidence, and false-positive regression tests. Full backend regression passed: `424 passed, 2 warnings`. |
 | Phase 3.5 - Conservative Deduplication | Planned | Pending exact normalized duplicate detection, adjacent duplicate handling, source/section/page guards, duplicate audit records, and preservation of ambiguous duplicates. |
 | Phase 3.6 - Cleaning Service and Error Boundary | Planned | Pending `CleaningService`, `ExtractionResult -> CleaningInput -> ContentCleaner -> CleaningResult` orchestration, cleaning error mapping to `SourceError`, and service-level integration tests. |
 | Phase 3.7 - Final Verification and Documentation | Planned | Pending final cross-source verification, determinism/idempotency checks, lineage/order/statistics verification, limitation documentation, completion report, and Phase 4 input contract. |
@@ -1067,7 +1067,29 @@ Normalized raw units -> CleanDocumentUnit[]
 
 ### Phase 3.4 — Source-Aware Filtering
 
-Status: Planned.
+Status: Completed.
+
+Completion notes:
+
+* Added source-aware filtering helpers in
+  `backend/app/rag/cleaning/source_filters.py`.
+* Added contextual HTML UI-noise and reading-time filtering while preserving
+  ambiguous body content, headings, lists, captions, tables, code, and
+  non-URL sources.
+* Implemented PDF page-number candidate handling with one-based page provenance
+  checks and explicit separation from zero-based `page_index`.
+* Added strict bbox/page-dimension validation where invalid geometry preserves
+  content and never fails the whole cleaning run.
+* Implemented footer-only `pdf_page_number` auto-drop when reliable geometry is
+  present, header-band preserve/warn behavior, and middle-page silent
+  preservation.
+* Added internal candidate warning origins for normalization and source-filter
+  warnings without changing the public `CleaningWarning` schema.
+* Added source-aware stats counters and safe audit metadata for reviewed
+  evidence.
+* Added focused tests in `backend/tests/test_cleaning_source_filters.py`.
+* Verification completed with full backend regression:
+  `424 passed, 2 warnings`.
 
 Tasks:
 

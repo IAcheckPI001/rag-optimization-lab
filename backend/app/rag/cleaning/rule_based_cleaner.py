@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 
 from app.rag.cleaning.errors import (
     CleaningInputError,
@@ -12,6 +13,14 @@ from app.rag.cleaning.errors import (
 )
 from app.rag.cleaning.ids import build_clean_unit_id
 from app.rag.cleaning.normalization import NormalizedContent, normalize_content
+from app.rag.cleaning.source_filters import (
+    HTML_READING_TIME,
+    HTML_UI_NOISE,
+    PDF_PAGE_NUMBER,
+    POSSIBLE_PAGE_NUMBER,
+    SourceFilterDecision,
+    apply_source_filters,
+)
 from app.schemas.cleaning import (
     CleaningInput,
     CleaningResult,
@@ -32,7 +41,12 @@ SAFE_DROPPED_METADATA_KEYS = frozenset(
         "page_number",
         "page_block_index",
         "document_block_index",
+        "bbox",
+        "page_index",
+        "page_width",
+        "page_height",
         "html_tag",
+        "nearest_semantic_container",
         "serialization_format",
     }
 )
@@ -65,11 +79,26 @@ class _DropDecision:
     message: str
 
 
+class _WarningOrigin(str, Enum):
+    normalization = "normalization"
+    source_filter = "source_filter"
+    deduplication = "deduplication"
+
+
+@dataclass(frozen=True)
+class _CandidateWarning:
+    warning_code: str
+    message: str
+    extra_metadata: Mapping[str, object]
+    origin: _WarningOrigin
+
+
 @dataclass(frozen=True)
 class _CleanCandidate:
     raw_unit: RawDocumentUnit
     normalized: NormalizedContent
     drop: _DropDecision | None = None
+    candidate_warnings: tuple[_CandidateWarning, ...] = ()
 
 
 class RuleBasedDocumentCleaner:
@@ -107,7 +136,7 @@ class RuleBasedDocumentCleaner:
                     "source_type": input_data.source_type.value,
                     "total_input_units": len(input_data.units),
                     "dropped_unit_count": len(dropped_candidates),
-                    "reason_code": EMPTY_AFTER_NORMALIZATION,
+                    "reason_code": _no_content_reason_code(dropped_candidates),
                 },
             )
 
@@ -125,6 +154,7 @@ class RuleBasedDocumentCleaner:
             output_units=units,
             dropped_units=dropped_units,
             warnings=warnings,
+            candidate_warnings=_candidate_warnings(candidates),
         )
 
         return CleaningResult(
@@ -273,14 +303,76 @@ def _build_candidate(raw_unit: RawDocumentUnit) -> _CleanCandidate:
         content_type=raw_unit.content_type,
         extra_metadata=raw_unit.extra_metadata,
     )
+    candidate_warnings = _normalization_candidate_warnings(normalized)
     drop = None
     if is_blank_after_normalization(normalized.content):
         drop = _DropDecision(
             reason_code=EMPTY_AFTER_NORMALIZATION,
             message="Unit became empty after normalization.",
         )
+        return _CleanCandidate(
+            raw_unit=raw_unit,
+            normalized=normalized,
+            drop=drop,
+            candidate_warnings=candidate_warnings,
+        )
 
-    return _CleanCandidate(raw_unit=raw_unit, normalized=normalized, drop=drop)
+    source_filter_decision = apply_source_filters(raw_unit, normalized.content)
+    drop = _source_filter_drop(source_filter_decision)
+    candidate_warnings = (
+        *candidate_warnings,
+        *_source_filter_candidate_warnings(source_filter_decision),
+    )
+
+    return _CleanCandidate(
+        raw_unit=raw_unit,
+        normalized=normalized,
+        drop=drop,
+        candidate_warnings=candidate_warnings,
+    )
+
+
+def _normalization_candidate_warnings(
+    normalized: NormalizedContent,
+) -> tuple[_CandidateWarning, ...]:
+    return tuple(
+        _CandidateWarning(
+            warning_code=warning.warning_code,
+            message=warning.message,
+            extra_metadata=dict(warning.extra_metadata or {}),
+            origin=_WarningOrigin.normalization,
+        )
+        for warning in normalized.warnings
+    )
+
+
+def _source_filter_drop(
+    decision: SourceFilterDecision,
+) -> _DropDecision | None:
+    if decision.drop_reason_code is None:
+        return None
+
+    if decision.drop_message is None:
+        raise CleaningInvariantError("source filter drop must include a message")
+
+    return _DropDecision(
+        reason_code=decision.drop_reason_code,
+        message=decision.drop_message,
+    )
+
+
+def _source_filter_candidate_warnings(
+    decision: SourceFilterDecision,
+) -> tuple[_CandidateWarning, ...]:
+    return tuple(
+        _CandidateWarning(
+            warning_code=warning.warning_code,
+            message=warning.message,
+            extra_metadata=dict(warning.extra_metadata),
+            origin=_WarningOrigin.source_filter,
+        )
+        for warning in decision.warnings
+    )
 
 
 def _run_timestamp(clock: Callable[[], datetime]) -> datetime:
@@ -405,7 +497,7 @@ def _public_warnings(
             clean_unit_index=clean_unit_index,
             extra_metadata=dict(warning.extra_metadata or {}),
         )
-        for warning in candidate.normalized.warnings
+        for warning in candidate.candidate_warnings
     ]
 
 
@@ -415,6 +507,7 @@ def _build_stats(
     output_units: list[CleanDocumentUnit],
     dropped_units: list[DroppedUnit],
     warnings: list[CleaningWarning],
+    candidate_warnings: list[_CandidateWarning],
 ) -> CleaningStats:
     output_by_raw_id = {unit.raw_unit_id: unit for unit in output_units}
     modified_unit_count = 0
@@ -435,6 +528,30 @@ def _build_stats(
         for unit in dropped_units
         if unit.reason_code == EMPTY_AFTER_NORMALIZATION
     )
+    html_ui_noise_dropped_count = sum(
+        1 for unit in dropped_units if unit.reason_code == HTML_UI_NOISE
+    )
+    html_reading_time_dropped_count = sum(
+        1 for unit in dropped_units if unit.reason_code == HTML_READING_TIME
+    )
+    pdf_page_number_dropped_count = sum(
+        1 for unit in dropped_units if unit.reason_code == PDF_PAGE_NUMBER
+    )
+    normalization_warning_count = sum(
+        1
+        for warning in candidate_warnings
+        if warning.origin is _WarningOrigin.normalization
+    )
+    source_filter_warning_count = sum(
+        1
+        for warning in candidate_warnings
+        if warning.origin is _WarningOrigin.source_filter
+    )
+    possible_page_number_warning_count = sum(
+        1
+        for warning in candidate_warnings
+        if warning.warning_code == POSSIBLE_PAGE_NUMBER
+    )
 
     return CleaningStats(
         total_input_units=len(input_units),
@@ -447,7 +564,32 @@ def _build_stats(
         characters_after=characters_after,
         extra_metadata={
             "empty_after_normalization_count": empty_after_normalization_count,
-            "normalization_warning_count": len(warnings),
+            "html_ui_noise_dropped_count": html_ui_noise_dropped_count,
+            "html_reading_time_dropped_count": html_reading_time_dropped_count,
+            "pdf_page_number_dropped_count": pdf_page_number_dropped_count,
+            "normalization_warning_count": normalization_warning_count,
+            "source_filter_warning_count": source_filter_warning_count,
+            "possible_page_number_warning_count": possible_page_number_warning_count,
             "modified_character_delta": characters_before - characters_after,
         },
     )
+
+
+def _candidate_warnings(candidates: list[_CleanCandidate]) -> list[_CandidateWarning]:
+    return [
+        warning
+        for candidate in candidates
+        for warning in candidate.candidate_warnings
+    ]
+
+
+def _no_content_reason_code(dropped_candidates: list[_CleanCandidate]) -> str:
+    reason_codes = {
+        candidate.drop.reason_code
+        for candidate in dropped_candidates
+        if candidate.drop is not None
+    }
+    if len(reason_codes) == 1:
+        return next(iter(reason_codes))
+
+    return "all_units_dropped"
