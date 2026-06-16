@@ -914,7 +914,7 @@ Do not store duplicate full raw content in metadata.
 | --- | --- | --- |
 | Phase 3.1 - Cleaning Core Contracts | Completed | Implemented `CleanDocumentUnit.clean_unit_index`, removed per-unit removed-character metrics, added `CleaningInput`, `CleaningWarning`, `DroppedUnit`, `CleaningStats`, `CleaningResult`, cleaning runtime errors, `ContentCleaner` protocol, deterministic clean unit ID helper, and focused contract tests. Full backend regression passed: `342 passed, 2 warnings`. |
 | Phase 3.2 - Deterministic Text Normalization | Completed | Implemented pure deterministic normalization helpers, `tsv_escaped_v1` table parse/serialize helpers, content-type dispatch for prose/list/table/code/unknown content, stage-aware control cleanup, internal normalization warnings, and focused idempotency/contract tests. Full backend regression passed: `374 passed, 2 warnings`. |
-| Phase 3.3 - Clean Unit Construction | Planned | Pending implementation of raw-to-clean conversion, stable clean IDs from `RawDocumentUnit.unit_index`, continuous `clean_unit_index`, blank-after-normalization drops, dropped-unit audit records, stats, limits, and one cleaner-created timestamp per run. |
+| Phase 3.3 - Clean Unit Construction | Completed | Implemented `RuleBasedDocumentCleaner`, raw-to-clean candidate finalization, stable clean IDs from `RawDocumentUnit.unit_index`, continuous clean indexes, blank-after-normalization dropped-unit audit records, strict policy/config validation, safe audit metadata, warning finalization, resource limits, UTC timestamp handling, and focused construction tests. Full backend regression passed: `411 passed, 2 warnings`. |
 | Phase 3.4 - Source-Aware Filtering | Planned | Pending conservative HTML/PDF source-aware filtering, high-confidence UI-noise rules, PDF page-number handling only when metadata is reliable, warnings for ambiguous cases, and false-positive regression tests. |
 | Phase 3.5 - Conservative Deduplication | Planned | Pending exact normalized duplicate detection, adjacent duplicate handling, source/section/page guards, duplicate audit records, and preservation of ambiguous duplicates. |
 | Phase 3.6 - Cleaning Service and Error Boundary | Planned | Pending `CleaningService`, `ExtractionResult -> CleaningInput -> ContentCleaner -> CleaningResult` orchestration, cleaning error mapping to `SourceError`, and service-level integration tests. |
@@ -1016,7 +1016,33 @@ Raw content -> deterministic normalized content
 
 ### Phase 3.3 — Clean Unit Construction
 
-Status: Planned.
+Status: Completed.
+
+Completion notes:
+
+* Added `RuleBasedDocumentCleaner` and `CleaningPolicy` in
+  `backend/app/rag/cleaning/rule_based_cleaner.py`.
+* Implemented one-raw-to-zero-or-one-clean construction from `CleaningInput`.
+* Implemented deterministic clean IDs from raw unit indexes and continuous
+  clean indexes from emitted output order.
+* Implemented blank-after-normalization dropped-unit audit records.
+* Implemented shared blank helper semantics, including NBSP/Unicode whitespace
+  handling and preservation of zero-width/Unicode `Cf`-only content.
+* Implemented safe dropped audit using `original_content_hash =
+  raw.content_hash` and allowlisted metadata only.
+* Implemented strict top-level raw `extra_metadata["cleaning"]` conflict
+  rejection.
+* Implemented policy precedence and strict `cleaner_config` resource-limit
+  override validation.
+* Implemented successful-run clock behavior: one call, timezone-aware required,
+  non-UTC normalized to UTC, failure paths do not call `clock()`.
+* Implemented public cleaning warnings from normalization warnings during
+  finalization.
+* Implemented cleaning stats and schema invariant equations.
+* Added focused tests in
+  `backend/tests/test_rule_based_cleaner_construction.py`.
+* Verification completed with full backend regression:
+  `411 passed, 2 warnings`.
 
 Tasks:
 

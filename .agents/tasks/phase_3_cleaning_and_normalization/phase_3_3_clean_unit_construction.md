@@ -1,11 +1,41 @@
 # Phase 3.3 - Clean Unit Construction
 
-Status: Planned.
+Status: Completed.
 
 Depends on:
 
 * Phase 3.1 cleaning contracts.
 * Phase 3.2 deterministic normalization helpers.
+
+## Completion Notes
+
+* Added `RuleBasedDocumentCleaner` and `CleaningPolicy` in
+  `backend/app/rag/cleaning/rule_based_cleaner.py`.
+* Implemented raw-to-clean candidate construction with `_DropDecision | None`
+  so candidate state cannot represent contradictory drop states.
+* Implemented blank-after-normalization dropping with one `DroppedUnit` per
+  dropped raw unit.
+* Implemented deterministic clean IDs from `RawDocumentUnit.unit_index` and
+  continuous `clean_unit_index` from emitted output order.
+* Implemented safe dropped-unit audit records using `raw.content_hash` and a
+  metadata allowlist.
+* Implemented strict top-level raw `extra_metadata["cleaning"]` conflict
+  rejection while allowing nested source metadata keys named `cleaning`.
+* Implemented policy precedence:
+  defaults -> constructor policy -> allowlisted `cleaner_config` overrides.
+* Implemented strict `cleaner_config` validation, including bool rejection.
+* Implemented clock behavior: successful runs call `clock()` exactly once,
+  naive datetimes raise `CleaningInvariantError`, aware non-UTC datetimes are
+  normalized to UTC, and input/config/limit/all-dropped failures do not call
+  `clock()`.
+* Implemented public `CleaningWarning` finalization from internal normalization
+  warnings, attaching final clean indexes for emitted units and `None` for
+  dropped units.
+* Implemented cleaning statistics and all schema equations.
+* Added focused construction tests in
+  `backend/tests/test_rule_based_cleaner_construction.py`.
+* Verification completed with full backend regression:
+  `411 passed, 2 warnings`.
 
 ## Purpose
 
@@ -95,12 +125,83 @@ HTML extraction currently emits at most 10,000 units and 5,000,000 extracted
 characters by default, so cleaner defaults can be higher without changing Phase
 2 behavior.
 
+Policy precedence must be explicit:
+
+```text
+CleaningPolicy defaults
+-> constructor policy
+-> CleaningInput.cleaner_config allowlisted per-run overrides
+```
+
+Allowed `cleaner_config` override keys in Phase 3.3:
+
+```text
+max_input_units
+max_input_characters
+max_output_units
+max_output_characters
+```
+
+Unknown `cleaner_config` keys must raise `CleaningInputError`.
+
+Allowed override values must be integers greater than or equal to `1`.
+
+Reject these override values:
+
+```python
+True
+False
+1.5
+"100"
+None
+0
+-1
+```
+
+Because `bool` is a subclass of `int` in Python, validation must not rely only
+on:
+
+```python
+isinstance(value, int)
+```
+
+Use an explicit bool check:
+
+```python
+if isinstance(value, bool) or not isinstance(value, int):
+    raise CleaningInputError(...)
+```
+
+Do not allow `cleaner_config` to change normalization behavior in Phase 3.3.
+The following remain out of scope:
+
+```text
+trim_code_outer_blank_lines
+drop_pdf_page_numbers
+html_noise_rules
+deduplicate
+```
+
 ## Cleaned Timestamp
 
 The cleaner must call `clock()` exactly once per cleaning run.
 
 All emitted `CleanDocumentUnit` objects in a single successful
 `CleaningResult` must use the same `cleaned_at`.
+
+Clock behavior:
+
+* successful runs call `clock()` exactly once
+* naive datetimes from `clock()` raise `CleaningInvariantError`
+* timezone-aware non-UTC datetimes are normalized to UTC before assignment
+* input, config, resource-limit, and all-dropped failures do not call `clock()`
+
+To satisfy this, call `clock()` only after:
+
+* input/config validation has passed
+* input resource limits have passed
+* candidates have been built
+* at least one candidate will be emitted
 
 Tests should inject:
 
@@ -117,26 +218,74 @@ High-level algorithm:
 
 ```text
 1. Validate CleaningInput.
-2. Enforce input resource limits before processing.
-3. Create one run timestamp.
-4. Iterate raw units in input order.
-5. Normalize content according to content type.
-6. If normalized content is blank:
-   - append DroppedUnit with reason empty_after_normalization
-   - do not emit CleanDocumentUnit
-7. Otherwise:
-   - assign clean_unit_index = len(output_units)
-   - assign clean_unit_id from raw unit_index
-   - copy source/document/page/section/heading/content_type metadata
-   - preserve raw parser metadata
-   - add cleaning metadata except applied rule list
-   - set transformations from normalization result
-   - set cleaned_at to run timestamp
-8. Enforce output resource limits.
-9. If no output units, raise CleaningNoContentError.
-10. Build CleaningStats.
-11. Build and return CleaningResult.
+2. Resolve effective policy from defaults, constructor policy, and
+   allowlisted `cleaner_config` overrides.
+3. Reject top-level raw metadata conflicts with service-owned cleaning
+   metadata.
+4. Enforce input resource limits before processing.
+5. Normalize raw units into internal candidates in raw input order.
+6. Mark candidates as dropped when normalized content is blank.
+7. If no candidates will be emitted, raise CleaningNoContentError without
+   creating a successful timestamp.
+8. Create one run timestamp.
+9. Finalize candidates:
+   - assign continuous clean indexes only to emitted units
+   - assign clean IDs from raw unit indexes
+   - build dropped-unit audit records
+   - attach public warnings with final clean indexes where available
+10. Enforce output resource limits.
+11. Build CleaningStats.
+12. Build and return CleaningResult.
 ```
+
+Use an internal candidate/finalization structure so later Phase 3.4 and 3.5
+rules can add source-aware drops or duplicate drops without refactoring clean
+index assignment and warning attachment.
+
+Recommended internal shape:
+
+```python
+@dataclass(frozen=True)
+class _CleanCandidate:
+    raw_unit: RawDocumentUnit
+    normalized: NormalizedContent
+    drop: _DropDecision | None = None
+
+
+@dataclass(frozen=True)
+class _DropDecision:
+    reason_code: str
+    message: str
+```
+
+Avoid candidate shapes with independent nullable fields such as:
+
+```python
+should_drop: bool
+drop_reason_code: str | None
+drop_message: str | None
+```
+
+Those can represent contradictory states like `should_drop=True` with no
+reason. A single optional `_DropDecision` keeps candidate state coherent:
+
+```text
+drop is None        -> emitted candidate
+drop is not None    -> dropped candidate with required reason/message
+```
+
+Finalization is the only place that assigns:
+
+* `clean_unit_index`
+* `clean_unit_id`
+* public `CleaningWarning.clean_unit_index`
+* output statistics
+
+Warnings from normalization should stay internal on candidates until
+finalization. If a candidate is emitted, attach the final clean index to its
+warnings. If a candidate is dropped, keep `clean_unit_index=None`.
+
+Do not mutate already-created public warning objects to fill indexes later.
 
 ## Metadata Policy
 
@@ -162,12 +311,62 @@ extra_metadata["cleaning"]["applied_rules"]
 `transformations` is the source of truth for rule codes.
 
 If raw metadata already contains key `cleaning`, the cleaner must prevent caller
-metadata from overwriting service-owned cleaning provenance. Recommended:
+metadata from overwriting service-owned cleaning provenance.
 
-* raise `CleaningInputError`, or
-* move old value to a namespaced safe field only if explicitly approved.
+Phase 3.3 must reject the conflict with `CleaningInputError`.
 
-Prefer raising in Phase 3.3 for strictness.
+The conflict scope is exact:
+
+```python
+"cleaning" in raw_unit.extra_metadata
+```
+
+This check applies only to the top-level `extra_metadata` of each
+`RawDocumentUnit`.
+
+Do not reject nested metadata keys named `cleaning`, for example:
+
+```python
+extra_metadata={
+    "parser_details": {"cleaning": "literal source field"}
+}
+```
+
+Do not reject `CleaningInput.extra_metadata["cleaning"]` in Phase 3.3 unless the
+cleaner starts merging input-level metadata into per-unit metadata. That concern
+belongs to the service/run metadata boundary in a later phase.
+
+No conflict error may include full raw content.
+
+## Blank Unit Rule
+
+Use one helper for blank-after-normalization decisions:
+
+```python
+def is_blank_after_normalization(content: str) -> bool:
+    return content == "" or all(character.isspace() for character in content)
+```
+
+The following must be treated as blank:
+
+```python
+""
+"   "
+"\t\n"
+"\u00a0"
+"\n\t\u00a0"
+```
+
+Do not treat zero-width or Unicode format-only content as blank in Phase 3.3 if
+Phase 3.2 has not removed it:
+
+```python
+"\u200b"  # zero-width space, category Cf
+"\ufeff"  # BOM / zero-width no-break space, category Cf
+```
+
+Those values may be addressed by a future reviewed Unicode format-character
+policy, but Phase 3.3 must not silently drop them.
 
 ## Dropped Unit Audit
 
@@ -197,12 +396,46 @@ html_tag
 serialization_format
 ```
 
+Dropped audit metadata must copy only this allowlist. It must not copy the full
+raw `extra_metadata` dictionary.
+
+`original_content_hash` must always be:
+
+```python
+raw.content_hash
+```
+
+Do not compute the dropped hash from normalized blank content.
+
 Do not include:
 
 * full raw content
 * `content_bytes`
 * secrets
 * URL query tokens beyond what Phase 2 already preserved safely
+
+If every input unit is dropped after normalization:
+
+```text
+all units normalize to blank
+-> build one DroppedUnit per raw unit internally
+-> do not return partial CleaningResult
+-> raise CleaningNoContentError
+```
+
+`CleaningNoContentError.details` may include safe aggregate counts such as:
+
+```text
+source_id
+document_id
+source_type
+total_input_units
+dropped_unit_count
+reason_code = empty_after_normalization
+```
+
+Do not include full raw content or dropped-unit records in the exception unless
+a later persistence/audit requirement explicitly asks for it.
 
 ## Stats Policy
 
@@ -229,6 +462,26 @@ clean.content == raw.content
 `dropped_unit_count` equals dropped unit records length.
 
 `warning_count` equals warning records length.
+
+Stats must satisfy:
+
+```text
+total_input_units
+= total_output_units + dropped_unit_count
+```
+
+```text
+modified_unit_count + unchanged_unit_count
+= total_output_units
+```
+
+```text
+warning_count = len(warnings)
+```
+
+`characters_before` counts all raw units, including dropped units.
+
+`characters_after` counts emitted clean units only.
 
 Potential `stats.extra_metadata` counters:
 
@@ -277,6 +530,17 @@ ProcessingStage.cleaning
 
 Warnings must not contain full document content.
 
+Warning attachment must happen during finalization:
+
+* emitted candidate warnings get `raw_unit_id` and final `clean_unit_index`
+* dropped candidate warnings get `raw_unit_id` and `clean_unit_index=None`
+* run-level warnings, if any are introduced later, may keep both unit fields
+  unset
+
+Phase 3.3 should not emit `possible_mojibake` unless Phase 3.2 actually returns
+that internal warning. Current Phase 3.2 only emits reviewed normalization
+warnings.
+
 ## Tests To Add
 
 Add:
@@ -295,16 +559,38 @@ Test categories:
 * all clean units share one injected `cleaned_at`
 * cleaned timestamp is timezone-aware
 * blank-after-normalization creates `DroppedUnit`
+* blank helper treats empty string, ASCII spaces, tabs, newlines, NBSP, and
+  mixed whitespace as blank
+* blank helper does not treat zero-width or Unicode `Cf`-only content as blank
 * all blank results raise `CleaningNoContentError`
+* all blank results internally build one dropped record per raw unit but do not
+  return a partial `CleaningResult`
 * dropped records omit full content
 * raw metadata preserved
 * cleaner-owned `cleaning` metadata added
-* caller/raw `cleaning` metadata conflict rejected
+* top-level raw `extra_metadata["cleaning"]` conflict rejected
+* nested raw metadata key named `cleaning` is not rejected
+* allowed `cleaner_config` resource limit overrides apply per run
+* unknown `cleaner_config` keys are rejected
+* invalid `cleaner_config` limit values are rejected
+* bool `cleaner_config` limit values are rejected even though bool subclasses int
+* `cleaner_config` rejects `True`, `False`, `1.5`, `"100"`, `None`, `0`, and
+  `-1`
 * stats equations hold
+* `characters_before` counts all raw units
+* `characters_after` counts only emitted clean units
 * input resource limit failure
 * output resource limit failure
 * no partial success on limit failure
+* successful run calls `clock()` exactly once
+* naive `clock()` result raises `CleaningInvariantError`
+* aware non-UTC `clock()` result is normalized to UTC
+* input/config/limit/all-dropped failures do not call `clock()`
 * warnings use `ProcessingStage.cleaning`
+* emitted-unit warnings receive final `clean_unit_index`
+* dropped-unit warnings keep `clean_unit_index=None`
+* dropped audit uses `original_content_hash = raw.content_hash`
+* dropped audit copies only safe metadata allowlist
 * deterministic stable fields across repeated runs with fixed clock
 
 ## Verification
@@ -339,6 +625,10 @@ Phase 3.3 is complete when:
 * Stats satisfy all contract equations.
 * Resource limits fail without partial results.
 * All emitted clean units in one result share one timestamp.
+* Blank detection follows the shared helper semantics.
+* Top-level service-owned cleaning metadata conflicts are rejected.
+* Policy precedence and `cleaner_config` override validation are explicit.
+* Candidate finalization owns clean indexes and warning attachment.
 * No source-aware noise filtering or deduplication is implemented.
 * No dependencies are added.
 
@@ -348,4 +638,3 @@ Phase 3.3 is complete when:
 * PDF page-number warning/drop logic: Phase 3.4.
 * Exact deduplication: Phase 3.5.
 * Service-level `ExtractionResult -> CleaningResult`: Phase 3.6.
-
